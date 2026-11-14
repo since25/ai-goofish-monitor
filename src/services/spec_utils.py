@@ -22,7 +22,12 @@ PLAUSIBLE_MEMORY = frozenset({8, 16, 18, 24, 32, 36, 48, 64, 96, 128})
 CHIP_RE = re.compile(r"(?<![A-Za-z0-9])M(\d{1,2})[-+\s]*(Pro|Max|Ultra)?(?![A-Za-z])", re.IGNORECASE)
 MEM_WITH_LABEL_RE = re.compile(r"(\d{2,3})\s*(?:GB|G|g|Ｇ)\s*(?:内存|运存|统一内存)")
 MEM_LABEL_FIRST_RE = re.compile(r"(?:内存|运存|统一内存)\s*[:：]?\s*(\d{2,3})")
-MEM_COMBO_RE = re.compile(r"(\d{2,3})\s*[+＋/]\s*(\d{3,4})\s*(?:GB|G|g|Ｇ)?")
+MEM_COMBO_RE = re.compile(
+    r"(?<![A-Za-z0-9])(\d{2,3})\s*(?:GB|G)?\s*(?:内存|运存|统一内存)?"
+    r"\s*[+＋/]\s*(\d+(?:\.\d+)?)\s*(?:TB|T|GB|G)?"
+    r"(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
 MEM_BARE_RE = re.compile(
     r"(?<![A-Za-z0-9])(16|18|24|32|36|48|64|96|128)\s*(?:GB|G|g|Ｇ)"
     r"(?![A-Za-z0-9])(?!\s*(?:硬盘|固态|存储|SSD))"
@@ -40,9 +45,10 @@ BATTERY_PCT_RE = re.compile(
     r"(?:电池|健康度|健康|最大容量|容量)[^\d%]{0,6}(\d{2,3})\s*%"
     r"|(\d{2,3})\s*%[^\d]{0,4}(?:健康|容量)"
 )
-CYCLES_RE = re.compile(r"循环[^\d]{0,4}(\d{1,4})\s*次")
+CYCLES_RE = re.compile(r"(?:循环|充电次数)[^\d]{0,4}(\d{1,4})\s*次")
 CYCLES_REV_RE = re.compile(r"(\d{1,4})\s*次\s*循环")
-CYCLES_LOOSE_RE = re.compile(r"循环(?:次数)?[^\d]{0,4}(\d{1,4})(?!\d)")
+BATTERY_HEALTH_BARE_RE = re.compile(r"健康度[^\d%]{0,6}(\d{2,3})(?!\s*[成新])")
+CYCLES_LOOSE_RE = re.compile(r"(?:循环|充电次数)(?:次数)?[^\d]{0,4}(\d{1,4})(?!\d)")
 
 SPEC_KEYS = (
     "model",
@@ -136,11 +142,20 @@ def normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def parse_chip_from_text(text: str) -> Optional[str]:
-    match = CHIP_RE.search(text or "")
-    if not match:
-        return None
-    suffix = (match.group(2) or "").lower()
-    return f"m{match.group(1)}{suffix}"
+    """取最具体的芯片型号：优先带 Pro/Max/Ultra 的匹配。
+
+    闲鱼标题常出现 “M3 Ma x” 这种被空格拆开的写法，第一个匹配可能只是
+    “M3”，所以这里扫一遍，有后缀就以后缀为准。
+    """
+    bare = None
+    for match in CHIP_RE.finditer(text or ""):
+        generation = match.group(1)
+        suffix = (match.group(2) or "").lower()
+        if suffix:
+            return f"m{generation}{suffix}"
+        if bare is None:
+            bare = f"m{generation}"
+    return bare
 
 
 def parse_memory_from_text(text: str) -> Optional[int]:
@@ -189,7 +204,7 @@ def parse_battery_from_text(text: str) -> tuple[Optional[int], Optional[int]]:
     """从标题/描述里捞电池健康度和循环次数。"""
     text = text or ""
     health = None
-    match = BATTERY_PCT_RE.search(text)
+    match = BATTERY_PCT_RE.search(text) or BATTERY_HEALTH_BARE_RE.search(text)
     if match:
         raw = match.group(1) or match.group(2)
         try:

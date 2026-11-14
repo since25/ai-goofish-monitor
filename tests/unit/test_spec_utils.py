@@ -40,3 +40,23 @@ def test_battery_health_and_cycles_from_text():
     spec = parse_spec_from_title("电池最大容量100%。 22次循环")
     assert spec["battery_health_pct"] == 100.0
     assert spec["battery_cycles"] == 22
+
+
+def test_memory_storage_combo_without_units():
+    spec = parse_spec_from_title("美版，银色，m3max 16寸，48+1t 充电次数10次左右")
+    assert spec["memory_gb"] == 48
+    assert spec["storage_gb"] == 1024
+    assert spec["battery_cycles"] == 10
+
+    spec = parse_spec_from_title("2023款 M3 Max 16寸 48内存+1TB硬盘 电池,容量 96%")
+    assert spec["memory_gb"] == 48
+    assert spec["storage_gb"] == 1024
+    assert spec["battery_health_pct"] == 96.0
+
+
+def test_spaced_chip_falls_back_to_description():
+    title = "美版 MacBook Pro 14 寸 M3 Ma x 64G 2T 电池健康度 98"
+    description = "美版 MacBook Pro 14 寸 M3 Max 64G 2T，外观很新"
+    spec = parse_spec_from_title(f"{title} {description}")
+    assert spec["chip"] == "m3max"
+    assert spec["battery_health_pct"] == 98.0
