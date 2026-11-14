@@ -34,6 +34,7 @@ class ProcessService:
         self.failure_guard = FailureGuard()
         self._on_started: LifecycleHook | None = None
         self._on_stopped: LifecycleHook | None = None
+        self._external_busy_check: Callable[[], bool] | None = None
 
     def set_lifecycle_hooks(
         self,
@@ -66,6 +67,17 @@ class ProcessService:
         """检查任务是否正在运行"""
         process = self.processes.get(task_id)
         return process is not None and process.returncode is None
+
+    def any_running(self) -> bool:
+        """是否有任意定时任务在跑（供搜索任务错峰）。"""
+        return any(
+            process is not None and process.returncode is None
+            for process in self.processes.values()
+        )
+
+    def set_external_busy_check(self, check: Callable[[], bool] | None) -> None:
+        """注入外部占用判断：一次性搜索在跑时，定时任务本轮让路。"""
+        self._external_busy_check = check
 
     async def _drain_finished_process(self, task_id: int) -> None:
         process = self.processes.get(task_id)
@@ -135,6 +147,9 @@ class ProcessService:
         await self._drain_finished_process(task_id)
         if self.is_running(task_id):
             print(f"任务 '{task_name}' (ID: {task_id}) 已在运行中")
+            return False
+        if self._external_busy_check is not None and self._external_busy_check():
+            print(f"搜索任务占用中，跳过本轮定时任务 '{task_name}'")
             return False
 
         decision = self.failure_guard.should_skip_start(

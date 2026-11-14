@@ -15,6 +15,7 @@ from src.api.routes import (
     prompts,
     results,
     recommendations,
+    search_jobs,
     login_state,
     websocket,
     accounts,
@@ -23,12 +24,14 @@ from src.api.dependencies import (
     set_process_service,
     set_scheduler_service,
     set_task_generation_service,
+    set_search_job_service,
 )
 from src.services.task_service import TaskService
 from src.services.process_service import ProcessService
 from src.services.scheduler_service import SchedulerService
 from src.services.task_log_cleanup_service import cleanup_task_logs
 from src.services.task_generation_service import TaskGenerationService
+from src.services.search_job_service import SearchJobService
 from src.infrastructure.persistence.sqlite_bootstrap import bootstrap_sqlite_storage
 from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepository
 from src.infrastructure.config.settings import settings as app_settings
@@ -38,6 +41,9 @@ from src.infrastructure.config.settings import settings as app_settings
 process_service = ProcessService()
 scheduler_service = SchedulerService(process_service)
 task_generation_service = TaskGenerationService()
+search_job_service = SearchJobService()
+search_job_service.bind_busy_check(process_service.any_running)
+process_service.set_external_busy_check(search_job_service.is_active)
 
 
 async def _sync_task_runtime_status(task_id: int, is_running: bool) -> None:
@@ -61,6 +67,7 @@ process_service.set_lifecycle_hooks(
 set_process_service(process_service)
 set_scheduler_service(scheduler_service)
 set_task_generation_service(task_generation_service)
+set_search_job_service(search_job_service)
 
 
 @asynccontextmanager
@@ -70,6 +77,7 @@ async def lifespan(app: FastAPI):
     print("正在启动应用...")
     bootstrap_sqlite_storage()
     cleanup_task_logs(keep_days=app_settings.task_log_retention_days)
+    await search_job_service.start()
 
     # 重置所有任务状态为停止
     task_repo = SqliteTaskRepository()
@@ -91,6 +99,7 @@ async def lifespan(app: FastAPI):
     # 关闭时
     print("正在关闭应用...")
     scheduler_service.stop()
+    await search_job_service.stop()
     await process_service.stop_all()
     print("应用已关闭")
 
@@ -111,6 +120,7 @@ app.include_router(settings.router)
 app.include_router(prompts.router)
 app.include_router(results.router)
 app.include_router(recommendations.router)
+app.include_router(search_jobs.router)
 app.include_router(login_state.router)
 app.include_router(websocket.router)
 app.include_router(accounts.router)

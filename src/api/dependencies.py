@@ -9,6 +9,7 @@ from src.services.ai_service import AIAnalysisService
 from src.services.process_service import ProcessService
 from src.services.scheduler_service import SchedulerService
 from src.services.task_generation_service import TaskGenerationService
+from src.services.search_job_service import SearchJobService
 from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepository
 from src.infrastructure.external.ai_client import AIClient
 
@@ -17,6 +18,7 @@ from src.infrastructure.external.ai_client import AIClient
 _process_service_instance = None
 _scheduler_service_instance = None
 _task_generation_service_instance = None
+_search_job_service_instance = None
 
 
 def set_process_service(service: ProcessService):
@@ -35,6 +37,12 @@ def set_task_generation_service(service: TaskGenerationService):
     """设置全局 TaskGenerationService 实例"""
     global _task_generation_service_instance
     _task_generation_service_instance = service
+
+
+def set_search_job_service(service: SearchJobService):
+    """设置全局 SearchJobService 实例"""
+    global _search_job_service_instance
+    _search_job_service_instance = service
 
 
 # 服务依赖注入
@@ -74,3 +82,10 @@ def get_task_generation_service() -> TaskGenerationService:
     if _task_generation_service_instance is None:
         raise RuntimeError("TaskGenerationService 未初始化")
     return _task_generation_service_instance
+
+
+def get_search_job_service() -> SearchJobService:
+    """获取一次性搜索任务服务实例"""
+    if _search_job_service_instance is None:
+        raise RuntimeError("SearchJobService 未初始化")
+    return _search_job_service_instance

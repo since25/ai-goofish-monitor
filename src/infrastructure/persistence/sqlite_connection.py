@@ -104,6 +104,22 @@ SCHEMA_STATEMENTS = (
         updated_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS search_jobs (
+        id TEXT PRIMARY KEY,
+        task_name TEXT NOT NULL,
+        keyword TEXT NOT NULL,
+        params_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        exit_code INTEGER,
+        error TEXT,
+        result_count INTEGER NOT NULL DEFAULT 0,
+        job_dir TEXT NOT NULL
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_tasks_name ON tasks(task_name)",
     """
     CREATE INDEX IF NOT EXISTS idx_results_filename_crawl
@@ -128,6 +144,10 @@ SCHEMA_STATEMENTS = (
     """
     CREATE INDEX IF NOT EXISTS idx_snapshots_keyword_item_time
     ON price_snapshots(keyword_slug, item_id, snapshot_time DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_search_jobs_created
+    ON search_jobs(created_at DESC)
     """,
 )
 

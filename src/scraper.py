@@ -7,6 +7,7 @@ import signal
 import subprocess
 import tempfile
 from datetime import datetime
+from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urlencode
 
@@ -108,6 +109,45 @@ def _clean_item_description(value, limit: int = 2000) -> str:
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:limit]
+
+
+def _collector_config(task_config: dict) -> dict:
+    """一次性搜索任务的采集配置；普通任务返回空字典。"""
+    collector = task_config.get("collector") or {}
+    if not isinstance(collector, dict) or not collector.get("enabled"):
+        return {}
+    if not str(collector.get("result_path") or "").strip():
+        return {}
+    return collector
+
+
+def _build_collector_saver(result_path: str):
+    """只追加到 job 自己的 jsonl，不碰 SQLite。"""
+    path = Path(result_path)
+    lock = asyncio.Lock()
+
+    async def _saver(record: dict, keyword: str) -> bool:
+        payload = json.dumps(record, ensure_ascii=False)
+        async with lock:
+            await asyncio.to_thread(_append_collector_line, path, payload)
+        return True
+
+    return _saver
+
+
+def _append_collector_line(path: Path, payload: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(payload + "\n")
+
+
+async def _noop_notifier(item_data: dict, reason: str) -> None:
+    return None
+
+
+async def _noop_seller_loader(user_id: str) -> dict:
+    """一次性搜索不点进卖家主页，省时间也少一次风控暴露。"""
+    return {}
 
 
 def _should_analyze_images(task_config: dict) -> bool:
@@ -674,13 +714,16 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
     根据单个任务配置，异步爬取闲鱼商品数据，并对每个新发现的商品进行实时的、独立的AI分析和通知。
     """
     keyword = task_config["keyword"]
+    collector = _collector_config(task_config)
+    collect_only = bool(collector)
     price_scope = PriceScope.model_validate(task_config.get("price_scope") or {})
     spec_cache = {}
-    try:
-        # 快照落库时也写入 spec，后续价格口径和行情表无需重复解析。
-        spec_cache = load_item_spec_cache()
-    except Exception as exc:
-        print(f"LOG: 加载商品配置缓存失败，价格参考将仅使用标题解析: {exc}")
+    if not collect_only:
+        try:
+            # 快照落库时也写入 spec，后续价格口径和行情表无需重复解析。
+            spec_cache = load_item_spec_cache()
+        except Exception as exc:
+            print(f"LOG: 加载商品配置缓存失败，价格参考将仅使用标题解析: {exc}")
     spec_resolver = make_spec_resolver(spec_cache)
     max_pages = task_config.get("max_pages", 1)
     personal_only = task_config.get("personal_only", False)
@@ -692,6 +735,10 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
     if decision_mode not in {"ai", "keyword"}:
         decision_mode = "ai"
     keyword_rules = task_config.get("keyword_rules") or []
+    if collect_only:
+        # 采集模式不跑 AI：keyword 模式 + 空规则 = 只记录、不推荐、不通知。
+        decision_mode = "keyword"
+        keyword_rules = []
     free_shipping = task_config.get("free_shipping", False)
     raw_new_publish = task_config.get("new_publish_option") or ""
     new_publish_option = raw_new_publish.strip()
@@ -702,13 +749,19 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
     processed_links = set()
     history_run_id = datetime.now().strftime("%Y%m%d%H%M%S")
     history_seen_item_ids: set[str] = set()
-    historical_snapshots = load_price_snapshots(keyword)
-    result_filename = build_result_filename(keyword)
-    processed_links = load_processed_link_keys(keyword)
-    if processed_links:
-        print(f"LOG: 发现已存在结果集 {result_filename}，已加载 {len(processed_links)} 个历史商品用于去重。")
+    if collect_only:
+        # 一次性搜索：不读行情、不继承历史去重，结果只进 job 目录。
+        historical_snapshots = []
+        result_filename = str(collector.get("result_path") or "")
+        print(f"LOG: 一次性搜索任务，结果写入 {result_filename}")
     else:
-        print(f"LOG: 结果集 {result_filename} 当前为空，将写入新记录。")
+        historical_snapshots = load_price_snapshots(keyword)
+        result_filename = build_result_filename(keyword)
+        processed_links = load_processed_link_keys(keyword)
+        if processed_links:
+            print(f"LOG: 发现已存在结果集 {result_filename}，已加载 {len(processed_links)} 个历史商品用于去重。")
+        else:
+            print(f"LOG: 结果集 {result_filename} 当前为空，将写入新记录。")
 
     rotation_settings = _get_rotation_settings(task_config)
     account_items = load_state_files(rotation_settings["account_state_dir"])
@@ -823,14 +876,26 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
             analysis_dispatcher = ItemAnalysisDispatcher(
                 concurrency=_get_ai_analysis_concurrency(task_config),
                 skip_ai_analysis=SKIP_AI_ANALYSIS,
-                seller_loader=lambda user_id: seller_profile_cache.get_or_load(
-                    str(user_id),
-                    lambda seller_key: scrape_user_profile(context, seller_key),
+                seller_loader=(
+                    _noop_seller_loader
+                    if collect_only
+                    else lambda user_id: seller_profile_cache.get_or_load(
+                        str(user_id),
+                        lambda seller_key: scrape_user_profile(context, seller_key),
+                    )
                 ),
                 image_downloader=download_all_images,
                 ai_analyzer=get_ai_analysis,
-                notifier=send_ntfy_notification,
-                saver=save_to_jsonl,
+                notifier=(
+                    _noop_notifier
+                    if collect_only
+                    else send_ntfy_notification
+                ),
+                saver=(
+                    _build_collector_saver(str(collector.get("result_path")))
+                    if collect_only
+                    else save_to_jsonl
+                ),
             )
 
             # 增强反检测脚本（模拟真实移动设备）
@@ -1168,17 +1233,18 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                     )
                     if not basic_items:
                         break
-                    historical_snapshots.extend(
-                        record_market_snapshots(
-                            keyword=keyword,
-                            task_name=task_config.get("task_name", "Untitled Task"),
-                            items=basic_items,
-                            run_id=history_run_id,
-                            snapshot_time=datetime.now().isoformat(),
-                            seen_item_ids=history_seen_item_ids,
-                            spec_cache=spec_cache,
+                    if not collect_only:
+                        historical_snapshots.extend(
+                            record_market_snapshots(
+                                keyword=keyword,
+                                task_name=task_config.get("task_name", "Untitled Task"),
+                                items=basic_items,
+                                run_id=history_run_id,
+                                snapshot_time=datetime.now().isoformat(),
+                                seen_item_ids=history_seen_item_ids,
+                                spec_cache=spec_cache,
+                            )
                         )
-                    )
 
                     total_items_on_page = len(basic_items)
                     for i, item_data in enumerate(basic_items, 1):
@@ -1304,14 +1370,17 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                                     "商品信息": item_data,
                                     "卖家信息": {},
                                 }
-                                price_reference = build_market_reference(
-                                    keyword=keyword,
-                                    item=item_data,
-                                    current_market_items=basic_items,
-                                    historical_snapshots=historical_snapshots,
-                                    scope=price_scope,
-                                    spec_resolver=spec_resolver,
-                                )
+                                if collect_only:
+                                    price_reference = {}
+                                else:
+                                    price_reference = build_market_reference(
+                                        keyword=keyword,
+                                        item=item_data,
+                                        current_market_items=basic_items,
+                                        historical_snapshots=historical_snapshots,
+                                        scope=price_scope,
+                                        spec_resolver=spec_resolver,
+                                    )
                                 final_record["价格参考"] = price_reference
                                 final_record["price_insight"] = price_reference.get(
                                     "本商品价格位置", {}
