@@ -19,21 +19,30 @@ from src.infrastructure.persistence.sqlite_connection import sqlite_connection
 
 PLAUSIBLE_MEMORY = frozenset({8, 16, 18, 24, 32, 36, 48, 64, 96, 128})
 
-CHIP_RE = re.compile(r"(?<![A-Za-z0-9])M(\d{1,2})[-\s]*(Pro|Max|Ultra)?(?![A-Za-z])", re.IGNORECASE)
+CHIP_RE = re.compile(r"(?<![A-Za-z0-9])M(\d{1,2})[-+\s]*(Pro|Max|Ultra)?(?![A-Za-z])", re.IGNORECASE)
 MEM_WITH_LABEL_RE = re.compile(r"(\d{2,3})\s*(?:GB|G|g|Ｇ)\s*(?:内存|运存|统一内存)")
 MEM_LABEL_FIRST_RE = re.compile(r"(?:内存|运存|统一内存)\s*[:：]?\s*(\d{2,3})")
 MEM_COMBO_RE = re.compile(r"(\d{2,3})\s*[+＋/]\s*(\d{3,4})\s*(?:GB|G|g|Ｇ)?")
 MEM_BARE_RE = re.compile(
-    r"(?<![A-Za-z0-9])(16|18|24|32|36|48|64|96|128)\s*(?:GB|G|g|Ｇ)(?![A-Za-z0-9])"
+    r"(?<![A-Za-z0-9])(16|18|24|32|36|48|64|96|128)\s*(?:GB|G|g|Ｇ)"
+    r"(?![A-Za-z0-9])(?!\s*(?:硬盘|固态|存储|SSD))"
 )
 STORAGE_LABEL_RE = re.compile(r"(\d{3,4})\s*(?:GB|G|g|Ｇ)\s*(?:固态|硬盘|存储|SSD)")
-STORAGE_TB_RE = re.compile(r"(\d+(?:\.\d+)?)\s*TB", re.IGNORECASE)
+STORAGE_TB_RE = re.compile(r"(\d+(?:\.\d+)?)\s*T(?:B)?(?![A-Za-z])", re.IGNORECASE)
 STORAGE_BARE_RE = re.compile(
-    r"(?<![A-Za-z0-9])(128|256|512|1024|2048|4096)\s*(?:GB|G|g|Ｇ)(?![A-Za-z0-9])"
+    r"(?<![A-Za-z0-9])(128|256|512|1024|2048|4096)\s*(?:GB|G|g|Ｇ)"
+    r"(?![A-Za-z0-9])(?!\s*(?:内存|运存|统一内存))"
 )
 SCREEN_RE = re.compile(r"(\d{2}(?:\.\d)?)\s*[寸英寸]")
 COLOR_RE = re.compile(r"深空灰|深空黑|银色|黑色|星空色|午夜色|星光色")
 REGION_RE = re.compile(r"国行|美版|港版|日版|澳版|欧版|韩版")
+BATTERY_PCT_RE = re.compile(
+    r"(?:电池|健康度|健康|最大容量|容量)[^\d%]{0,6}(\d{2,3})\s*%"
+    r"|(\d{2,3})\s*%[^\d]{0,4}(?:健康|容量)"
+)
+CYCLES_RE = re.compile(r"循环[^\d]{0,4}(\d{1,4})\s*次")
+CYCLES_REV_RE = re.compile(r"(\d{1,4})\s*次\s*循环")
+CYCLES_LOOSE_RE = re.compile(r"循环(?:次数)?[^\d]{0,4}(\d{1,4})(?!\d)")
 
 SPEC_KEYS = (
     "model",
@@ -176,11 +185,41 @@ def parse_storage_from_text(text: str) -> Optional[int]:
     return None
 
 
+def parse_battery_from_text(text: str) -> tuple[Optional[int], Optional[int]]:
+    """从标题/描述里捞电池健康度和循环次数。"""
+    text = text or ""
+    health = None
+    match = BATTERY_PCT_RE.search(text)
+    if match:
+        raw = match.group(1) or match.group(2)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = None
+        if value is not None and 1 <= value <= 100:
+            health = value
+
+    cycles = None
+    for pattern in (CYCLES_RE, CYCLES_REV_RE, CYCLES_LOOSE_RE):
+        match = pattern.search(text)
+        if not match:
+            continue
+        try:
+            value = int(match.group(1))
+        except (TypeError, ValueError):
+            value = None
+        if value is not None and 0 <= value <= 5000:
+            cycles = value
+        break
+    return health, cycles
+
+
 def parse_spec_from_title(title: str) -> dict[str, Any]:
     text = title or ""
     screen_match = SCREEN_RE.search(text)
     color_match = COLOR_RE.search(text)
     region_match = REGION_RE.search(text)
+    battery_health, battery_cycles = parse_battery_from_text(text)
     return normalize_spec(
         {
             "chip": parse_chip_from_text(text),
@@ -189,6 +228,8 @@ def parse_spec_from_title(title: str) -> dict[str, Any]:
             "screen_inch": screen_match.group(1) if screen_match else None,
             "color": color_match.group(0) if color_match else None,
             "region": region_match.group(0) if region_match else None,
+            "battery_health_pct": battery_health,
+            "battery_cycles": battery_cycles,
         }
     )
 

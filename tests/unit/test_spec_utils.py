@@ -16,3 +16,27 @@ def test_parse_spec_from_title_keeps_full_chip():
     assert spec["storage_gb"] == 512
     assert spec["screen_inch"] == 14.0
     assert spec["region"] == "国行"
+
+
+def test_chip_allows_plus_between_generation_and_suffix():
+    assert parse_chip_from_text("2023款+M3+Max+16寸") == "m3max"
+
+
+def test_storage_is_not_confused_with_memory():
+    spec = parse_spec_from_title("macbook m3 max，16寸，128G内存 4T硬盘，美版")
+    assert spec["memory_gb"] == 128
+    assert spec["storage_gb"] == 4096
+
+
+def test_battery_health_and_cycles_from_text():
+    spec = parse_spec_from_title("Macbook Pro 16寸 M3Max 36G+1T 电池循环54，电池健康100%")
+    assert spec["battery_health_pct"] == 100.0
+    assert spec["battery_cycles"] == 54
+
+    spec = parse_spec_from_title("循环次数：440次 最大容量：91%")
+    assert spec["battery_health_pct"] == 91.0
+    assert spec["battery_cycles"] == 440
+
+    spec = parse_spec_from_title("电池最大容量100%。 22次循环")
+    assert spec["battery_health_pct"] == 100.0
+    assert spec["battery_cycles"] == 22
