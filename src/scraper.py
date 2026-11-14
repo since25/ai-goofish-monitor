@@ -3,9 +3,10 @@ import json
 import os
 import random
 import re
+import signal
 import tempfile
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import urlencode
 
 from playwright.async_api import (
@@ -52,11 +53,13 @@ from src.services.item_analysis_dispatcher import (
     ItemAnalysisDispatcher,
     ItemAnalysisJob,
 )
+from src.domain.models.task import PriceScope
 from src.services.price_history_service import (
     build_market_reference,
     load_price_snapshots,
     record_market_snapshots,
 )
+from src.services.spec_utils import load_item_spec_cache, make_spec_resolver
 from src.services.result_storage_service import load_processed_link_keys
 from src.services.seller_profile_cache import SellerProfileCache
 from src.services.search_pagination import (
@@ -97,11 +100,122 @@ def _resolve_browser_channel() -> str:
     return "msedge" if LOGIN_IS_EDGE else "chrome"
 
 
+def _clean_item_description(value, limit: int = 2000) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit]
+
+
 def _should_analyze_images(task_config: dict) -> bool:
     raw_value = task_config.get("analyze_images", True)
     if isinstance(raw_value, bool):
         return raw_value
     return str(raw_value).strip().lower() not in {"false", "0", "no", "off"}
+
+
+# Playwright 的 browser.close() 在 Chromium 卡死时会永久挂起。
+# 实测出现过日志已写完、进程又存活近 4 小时的情况，期间任务一直被当作“运行中”。
+BROWSER_CLOSE_TIMEOUT_SECONDS = 30
+
+# 只强杀浏览器相关子进程，保留 Playwright 的 node driver，避免 async_playwright 退出时抛错。
+BROWSER_PROCESS_MARKERS = ("chrome", "chromium", "msedge", "headless_shell", "crashpad")
+
+
+def _iter_descendant_pids(root_pid: Optional[int] = None) -> list[int]:
+    """返回本进程（或指定进程）的所有后代 PID，仅依赖 /proc。"""
+    root = root_pid if root_pid is not None else os.getpid()
+    children: dict[int, list[int]] = {}
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return []
+
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as fh:
+                data = fh.read()
+        except OSError:
+            continue
+        # comm 字段可能包含空格或括号，因此取最后一个 ')' 之后的字段。
+        try:
+            fields = data[data.rindex(b")") + 2:].split()
+            ppid = int(fields[1])
+        except (ValueError, IndexError):
+            continue
+        children.setdefault(ppid, []).append(pid)
+
+    ordered: list[int] = []
+    stack = list(children.get(root, []))
+    while stack:
+        pid = stack.pop()
+        ordered.append(pid)
+        stack.extend(children.get(pid, []))
+    return ordered
+
+
+def _read_cmdline(pid: int) -> str:
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            return fh.read().replace(b"\x00", b" ").decode("utf-8", "replace").lower()
+    except OSError:
+        return ""
+
+
+def _kill_descendant_processes(markers: Optional[tuple[str, ...]] = None) -> int:
+    """强杀本进程派生的子进程。
+
+    Args:
+        markers: 非空时只杀 cmdline 命中这些关键字的进程。
+    """
+    pids = _iter_descendant_pids()
+    killed = 0
+    for pid in pids:
+        if markers and not any(marker in _read_cmdline(pid) for marker in markers):
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+            killed += 1
+        except OSError:
+            continue
+    if killed:
+        print(f"[浏览器] 已强制结束 {killed} 个残留子进程。")
+    return killed
+
+
+def _force_kill_browser_processes() -> int:
+    return _kill_descendant_processes(markers=BROWSER_PROCESS_MARKERS)
+
+
+async def _close_browser_safely(
+    browser,
+    timeout: float = BROWSER_CLOSE_TIMEOUT_SECONDS,
+    *,
+    force_kill: Optional[Callable[[], int]] = None,
+) -> bool:
+    """带超时关闭浏览器，超时/异常时强杀残留的浏览器进程。
+
+    Returns:
+        正常关闭返回 True；走了强制兜底返回 False。
+    """
+    try:
+        await asyncio.wait_for(browser.close(), timeout=timeout)
+        return True
+    except asyncio.TimeoutError:
+        print(f"[浏览器] 关闭超时（>{timeout}s），尝试强制结束残留进程。")
+    except Exception as exc:
+        print(f"[浏览器] 关闭失败: {exc}，尝试强制结束残留进程。")
+
+    try:
+        (force_kill or _force_kill_browser_processes)()
+    except Exception as exc:
+        print(f"[浏览器] 强制结束残留进程失败: {exc}")
+    return False
 
 
 # 搜索页区域弹窗的 class 带 CSS Module hash，线上同时存在多套 hash。
@@ -509,6 +623,14 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
     根据单个任务配置，异步爬取闲鱼商品数据，并对每个新发现的商品进行实时的、独立的AI分析和通知。
     """
     keyword = task_config["keyword"]
+    price_scope = PriceScope.model_validate(task_config.get("price_scope") or {})
+    spec_cache = {}
+    try:
+        # 快照落库时也写入 spec，后续价格口径和行情表无需重复解析。
+        spec_cache = load_item_spec_cache()
+    except Exception as exc:
+        print(f"LOG: 加载商品配置缓存失败，价格参考将仅使用标题解析: {exc}")
+    spec_resolver = make_spec_resolver(spec_cache)
     max_pages = task_config.get("max_pages", 1)
     personal_only = task_config.get("personal_only", False)
     min_price = task_config.get("min_price")
@@ -1003,6 +1125,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                             run_id=history_run_id,
                             snapshot_time=datetime.now().isoformat(),
                             seen_item_ids=history_seen_item_ids,
+                            spec_cache=spec_cache,
                         )
                     )
 
@@ -1112,6 +1235,10 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                                 item_data["浏览量"] = await safe_get(
                                     item_do, "browseCnt", default="-"
                                 )
+                                description = await safe_get(
+                                    item_do, "desc", default=""
+                                ) or await safe_get(item_do, "itemDesc", default="")
+                                item_data["商品描述"] = _clean_item_description(description)
                                 # ...[此处可添加更多从详情页解析出的商品信息]...
 
                                 user_id = await safe_get(seller_do, "sellerId")
@@ -1131,6 +1258,8 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                                     item=item_data,
                                     current_market_items=basic_items,
                                     historical_snapshots=historical_snapshots,
+                                    scope=price_scope,
+                                    spec_resolver=spec_resolver,
                                 )
                                 final_record["价格参考"] = price_reference
                                 final_record["price_insight"] = price_reference.get(
@@ -1183,6 +1312,8 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
 
                         except PlaywrightTimeoutError:
                             print(f"   错误: 访问商品详情页或等待API响应超时。")
+                        except RiskControlError:
+                            raise
                         except Exception as e:
                             print(f"   错误: 处理商品详情时发生未知错误: {e}")
                         finally:
@@ -1225,7 +1356,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                 await asyncio.sleep(5)
                 if debug_limit:
                     input("按回车键关闭浏览器...")
-                await browser.close()
+                await _close_browser_safely(browser)
 
         return processed_item_count
 

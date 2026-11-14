@@ -10,6 +10,16 @@ EXPORT_HEADERS = [
     "搜索关键字",
     "商品ID",
     "商品标题",
+    "型号",
+    "芯片",
+    "尺寸",
+    "内存GB",
+    "硬盘GB",
+    "颜色",
+    "版本",
+    "电池健康",
+    "循环次数",
+    "保修",
     "当前售价",
     "发布时间",
     "卖家昵称",
@@ -26,6 +36,14 @@ EXPORT_HEADERS = [
 ]
 
 
+def _spec_value(spec: dict, key: str, suffix: str = "") -> str:
+    value = spec.get(key)
+    if value is None or value == "":
+        return ""
+    return f"{value}{suffix}"
+
+
+
 def build_results_csv(records: list[dict]) -> str:
     buffer = StringIO()
     writer = csv.DictWriter(buffer, fieldnames=EXPORT_HEADERS)
@@ -36,12 +54,23 @@ def build_results_csv(records: list[dict]) -> str:
         seller = record.get("卖家信息", {}) or {}
         ai_analysis = record.get("ai_analysis", {}) or {}
         price_insight = record.get("price_insight", {}) or {}
+        spec = ai_analysis.get("spec") or {}
         writer.writerow(
             {
                 "任务名称": record.get("任务名称", ""),
                 "搜索关键字": record.get("搜索关键字", ""),
                 "商品ID": item.get("商品ID", ""),
                 "商品标题": item.get("商品标题", ""),
+                "型号": _spec_value(spec, "model"),
+                "芯片": _spec_value(spec, "chip"),
+                "尺寸": _spec_value(spec, "screen_inch", "寸"),
+                "内存GB": _spec_value(spec, "memory_gb"),
+                "硬盘GB": _spec_value(spec, "storage_gb"),
+                "颜色": _spec_value(spec, "color"),
+                "版本": _spec_value(spec, "region"),
+                "电池健康": _spec_value(spec, "battery_health_pct", "%"),
+                "循环次数": _spec_value(spec, "battery_cycles"),
+                "保修": _spec_value(spec, "warranty"),
                 "当前售价": item.get("当前售价", ""),
                 "发布时间": item.get("发布时间", ""),
                 "卖家昵称": seller.get("卖家昵称") or item.get("卖家昵称", ""),

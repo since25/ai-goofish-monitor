@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
 from src.keyword_rule_engine import build_search_text, evaluate_keyword_rules
+from src.services.price_history_service import update_price_snapshot_spec
 
 
 SellerLoader = Callable[[str], Awaitable[dict]]
@@ -132,6 +133,7 @@ class ItemAnalysisDispatcher:
                     "AI analysis returned None after retries.",
                     error="AI analysis returned None after retries.",
                 )
+            self._backfill_snapshot_spec(job, record, ai_result)
             ai_result.setdefault("analysis_source", "ai")
             ai_result.setdefault("keyword_hit_count", 0)
             return ai_result
@@ -142,6 +144,27 @@ class ItemAnalysisDispatcher:
             )
         finally:
             self._cleanup_images(image_paths)
+
+    def _backfill_snapshot_spec(
+        self,
+        job: ItemAnalysisJob,
+        record: dict,
+        ai_result: dict,
+    ) -> None:
+        spec = ai_result.get("spec") if isinstance(ai_result, dict) else None
+        item_data = record.get("商品信息", {}) or {}
+        item_id = str(item_data.get("商品ID") or "")
+        if not isinstance(spec, dict) or not spec or not item_id:
+            return
+        try:
+            update_price_snapshot_spec(
+                keyword=job.keyword,
+                item_id=item_id,
+                spec=spec,
+                spec_source="ai",
+            )
+        except Exception as exc:
+            print(f"   [价格] 回填快照 spec 失败: {exc}")
 
     async def _download_images(self, job: ItemAnalysisJob, record: dict) -> list[str]:
         if not job.analyze_images:

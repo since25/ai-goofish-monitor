@@ -2,6 +2,7 @@
 调度服务
 负责管理定时任务的调度
 """
+import os
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from typing import List
@@ -9,6 +10,21 @@ from typing import List
 from src.core.cron_utils import build_cron_trigger
 from src.domain.models.task import Task
 from src.services.process_service import ProcessService
+
+
+# APScheduler 默认 misfire_grace_time=1 秒：主进程事件循环只要卡顿超过 1 秒，
+# 到期的定时任务就会被记为 EVENT_JOB_MISSED 并直接丢弃（不会补跑）。
+# 实测曾因循环卡顿导致整轮抓取静默跳过，这里放宽到 10 分钟。
+DEFAULT_MISFIRE_GRACE_SECONDS = 600
+MISFIRE_GRACE_ENV = "SCHEDULER_MISFIRE_GRACE_SECONDS"
+
+
+def resolve_misfire_grace_seconds() -> int:
+    """允许通过环境变量覆盖宽限时间，非法值回退到默认值。"""
+    raw = str(os.getenv(MISFIRE_GRACE_ENV, "")).strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return DEFAULT_MISFIRE_GRACE_SECONDS
 
 
 class SchedulerService:
@@ -67,7 +83,10 @@ class SchedulerService:
                         args=[task.id, task.task_name],
                         id=f"task_{task.id}",
                         name=f"Scheduled: {task.task_name}",
-                        replace_existing=True
+                        replace_existing=True,
+                        misfire_grace_time=resolve_misfire_grace_seconds(),
+                        coalesce=True,
+                        max_instances=1,
                     )
                     print(f"  -> 已为任务 '{task.task_name}' 添加定时规则: '{task.cron}'")
                 except ValueError as e:

@@ -104,6 +104,73 @@ def _normalize_price_value(value):
     return value
 
 
+class PriceScope(BaseModel):
+    """价格参考口径。
+
+    mode=keyword 时完全走旧逻辑（默认，行为不变）；
+    mode=task 只按任务允许集过滤；
+    mode=config 在允许集基础上按当前商品 spec 分桶。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    mode: Literal["keyword", "task", "config"] = "keyword"
+    match: dict[str, Any] = Field(default_factory=dict)
+    bucket_by: List[str] = Field(
+        default_factory=lambda: ["chip", "memory_gb", "storage_gb"]
+    )
+    window_days: int = Field(default=30, ge=1)
+    min_samples: int = Field(default=5, ge=1)
+    fallback: List[Literal["drop_storage", "drop_memory", "task"]] = Field(
+        default_factory=lambda: ["drop_storage"]
+    )
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def normalize_mode(cls, value):
+        return str(value or "keyword").strip().lower()
+
+    @field_validator("match", mode="before")
+    @classmethod
+    def normalize_match(cls, value):
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("price_scope.match 必须是对象")
+        normalized: dict[str, Any] = {}
+        for raw_key, raw_value in value.items():
+            key = str(raw_key).strip()
+            if not key:
+                continue
+            if isinstance(raw_value, (list, tuple)):
+                normalized[key] = list(raw_value)
+            elif isinstance(raw_value, (str, int, float, bool)) or raw_value is None:
+                normalized[key] = raw_value
+            else:
+                raise ValueError(f"price_scope.match.{key} 类型不支持")
+        return normalized
+
+    @field_validator("bucket_by", mode="before")
+    @classmethod
+    def normalize_bucket_by(cls, value):
+        if value is None:
+            return []
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("price_scope.bucket_by 必须是数组")
+        normalized = []
+        seen = set()
+        for item in value:
+            key = str(item or "").strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            normalized.append(key)
+        return normalized
+
+    def is_active(self) -> bool:
+        return self.mode in {"task", "config"}
+
+
 class Task(BaseModel):
     """任务实体"""
 
@@ -127,6 +194,7 @@ class Task(BaseModel):
     free_shipping: bool = True
     new_publish_option: Optional[str] = None
     region: Optional[str] = None
+    price_scope: PriceScope = Field(default_factory=PriceScope)
     decision_mode: Literal["ai", "keyword"] = "ai"
     keyword_rules: List[str] = Field(default_factory=list)
     is_running: bool = False
@@ -152,7 +220,15 @@ class Task(BaseModel):
     def apply_update(self, update: "TaskUpdate") -> "Task":
         """应用更新并返回新的任务实例"""
         update_data = update.model_dump(exclude_unset=True)
-        return self.model_copy(update=update_data)
+        updated = self.model_copy(update=update_data)
+        if "price_scope" in update_data:
+            raw_scope = update_data.get("price_scope")
+            updated.price_scope = (
+                PriceScope.model_validate(raw_scope)
+                if raw_scope is not None
+                else PriceScope()
+            )
+        return updated
 
 
 class TaskCreate(BaseModel):
@@ -177,6 +253,7 @@ class TaskCreate(BaseModel):
     free_shipping: bool = True
     new_publish_option: Optional[str] = None
     region: Optional[str] = None
+    price_scope: PriceScope = Field(default_factory=PriceScope)
     decision_mode: Literal["ai", "keyword"] = "ai"
     keyword_rules: List[str] = Field(default_factory=list)
 
@@ -244,6 +321,7 @@ class TaskUpdate(BaseModel):
     free_shipping: Optional[bool] = None
     new_publish_option: Optional[str] = None
     region: Optional[str] = None
+    price_scope: Optional[PriceScope] = None
     decision_mode: Optional[Literal["ai", "keyword"]] = None
     keyword_rules: Optional[List[str]] = None
     is_running: Optional[bool] = None
@@ -308,6 +386,7 @@ class TaskGenerateRequest(BaseModel):
     free_shipping: bool = True
     new_publish_option: Optional[str] = None
     region: Optional[str] = None
+    price_scope: Optional[PriceScope] = None
     decision_mode: Literal["ai", "keyword"] = "ai"
     keyword_rules: List[str] = Field(default_factory=list)
 

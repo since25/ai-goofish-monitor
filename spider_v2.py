@@ -6,10 +6,39 @@ import json
 import signal
 import contextlib
 import re
+import threading
+import time
+import traceback
 
 from src.config import STATE_FILE
 from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepository
 from src.scraper import scrape_xianyu
+
+
+# 兜底：整个爬虫进程最长运行时间，超时直接退出，避免卡死导致任务长期被视为“运行中”。
+SPIDER_MAX_RUNTIME_ENV = "SPIDER_MAX_RUNTIME_SECONDS"
+DEFAULT_MAX_RUNTIME_SECONDS = 90 * 60
+
+
+def resolve_max_runtime_seconds() -> int:
+    raw = str(os.getenv(SPIDER_MAX_RUNTIME_ENV, "")).strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return DEFAULT_MAX_RUNTIME_SECONDS
+
+
+def install_runtime_watchdog(max_seconds: int) -> None:
+    """启动一个 daemon 线程，进程运行超时后强制退出（退出码 124）。"""
+    def _watch() -> None:
+        time.sleep(max_seconds)
+        print(f"\n[看门狗] 进程运行超过 {max_seconds} 秒，强制退出。", flush=True)
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        finally:
+            os._exit(124)
+
+    threading.Thread(target=_watch, name="runtime-watchdog", daemon=True).start()
 
 
 async def main():
@@ -217,4 +246,26 @@ async def main():
             print(f"任务 '{task_name}' 正常结束，本次运行共处理了 {result} 个新商品。")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    install_runtime_watchdog(resolve_max_runtime_seconds())
+    exit_code = 0
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        exit_code = 130
+    except SystemExit as exc:
+        if isinstance(exc.code, int):
+            exit_code = exc.code
+        elif exc.code is not None:
+            print(exc.code, file=sys.stderr)
+            exit_code = 1
+    except Exception:
+        traceback.print_exc()
+        exit_code = 1
+    finally:
+        # 兜底：Playwright/Chromium 偶发卡死时，解释器退出阶段可能一直挂住，
+        # 导致任务被调度器长期当作“运行中”。这里写完日志后直接退出进程。
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        finally:
+            os._exit(exit_code)

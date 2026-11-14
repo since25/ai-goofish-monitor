@@ -186,10 +186,12 @@ class AIClient:
             if base64_img:
                 image_data_urls.append(f"data:image/jpeg;base64,{base64_img}")
 
+        price_reference = product_data.get("价格参考") or {}
         text_prompt = build_analysis_text_prompt(
             product_json,
             prompt_text,
             include_images=bool(image_data_urls),
+            has_scoped_price_reference=bool(price_reference.get("参考口径")),
         )
         user_content = build_user_message_content(text_prompt, image_data_urls)
         return [{"role": "user", "content": user_content}]
@@ -225,7 +227,10 @@ class AIClient:
                 request_params = remove_temperature_param(request_params)
 
             if self.settings.enable_thinking:
-                request_params["extra_body"] = {"enable_thinking": False}
+                request_params["extra_body"] = {
+                "enable_thinking": False,
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
 
             try:
                 response = await create_ai_response_async(

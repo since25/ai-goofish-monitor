@@ -14,6 +14,7 @@ from src.api.routes import (
     settings,
     prompts,
     results,
+    recommendations,
     login_state,
     websocket,
     accounts,
@@ -109,6 +110,7 @@ app.include_router(logs.router)
 app.include_router(settings.router)
 app.include_router(prompts.router)
 app.include_router(results.router)
+app.include_router(recommendations.router)
 app.include_router(login_state.router)
 app.include_router(websocket.router)
 app.include_router(accounts.router)

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { Task, TaskGenerateRequest } from '@/types/task.d.ts'
+import type { PriceScope, PriceScopeMode, Task, TaskGenerateRequest } from '@/types/task.d.ts'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -34,6 +34,13 @@ const accountStrategy = ref<'auto' | 'fixed' | 'rotate'>('auto')
 const selectedAccountStateFile = ref(AUTO_ACCOUNT_VALUE)
 const keywordRulesInput = ref('')
 const cronMode = ref<'preset' | 'custom'>('preset')
+const priceScopeMode = ref<PriceScopeMode>('keyword')
+const priceScopeChip = ref('')
+const priceScopeMemoryMin = ref<number | string | undefined>(undefined)
+const priceScopeMemoryMax = ref<number | string | undefined>(undefined)
+const priceScopeBucketStorage = ref(true)
+const priceScopeWindowDays = ref<number | string>(30)
+const priceScopeMinSamples = ref<number | string>(5)
 
 // 常用 cron 预设选项
 const cronPresets = computed(() => [
@@ -76,6 +83,56 @@ const accountStrategyOptions = computed(() => [
   { value: 'rotate', label: t('tasks.form.accountStrategy.rotate'), description: t('tasks.form.accountStrategy.rotateDescription') },
 ])
 
+function applyPriceScope(scope?: PriceScope | null) {
+  priceScopeMode.value = scope?.mode || 'keyword'
+  priceScopeChip.value = String(scope?.match?.chip ?? '')
+  const memory = scope?.match?.memory_gb
+  if (Array.isArray(memory)) {
+    priceScopeMemoryMin.value = (memory[0] ?? undefined) as number | undefined
+    priceScopeMemoryMax.value = (memory[1] ?? undefined) as number | undefined
+  } else if (typeof memory === 'number') {
+    priceScopeMemoryMin.value = memory
+    priceScopeMemoryMax.value = memory
+  } else {
+    priceScopeMemoryMin.value = undefined
+    priceScopeMemoryMax.value = undefined
+  }
+  priceScopeBucketStorage.value = (scope?.bucket_by || []).includes('storage_gb')
+  priceScopeWindowDays.value = Number(scope?.window_days ?? 30)
+  priceScopeMinSamples.value = Number(scope?.min_samples ?? 5)
+}
+
+function toOptionalNumber(value: number | string | undefined | null): number | null {
+  if (value === '' || value === undefined || value === null) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function buildPriceScope(): PriceScope {
+  const mode = priceScopeMode.value
+  const match: PriceScope['match'] = {}
+  if (mode !== 'keyword') {
+    const chip = String(priceScopeChip.value || '').trim()
+    if (chip) match.chip = chip
+    const min = toOptionalNumber(priceScopeMemoryMin.value)
+    const max = toOptionalNumber(priceScopeMemoryMax.value)
+    if (min !== null || max !== null) match.memory_gb = [min, max]
+  }
+  const bucketBy = mode === 'config'
+    ? (priceScopeBucketStorage.value
+        ? ['chip', 'memory_gb', 'storage_gb']
+        : ['chip', 'memory_gb'])
+    : []
+  return {
+    mode,
+    match,
+    bucket_by: bucketBy,
+    window_days: Math.max(1, Math.round(Number(priceScopeWindowDays.value) || 30)),
+    min_samples: Math.max(1, Math.round(Number(priceScopeMinSamples.value) || 5)),
+    fallback: mode === 'config' && priceScopeBucketStorage.value ? ['drop_storage'] : [],
+  }
+}
+
 function parseKeywordText(text: string): string[] {
   const values = String(text || '')
     .split(/[\n,]+/)
@@ -115,6 +172,7 @@ watch(() => [props.mode, props.initialData, props.defaultValues, props.defaultAc
       decision_mode: defaultValues.decision_mode || props.initialData.decision_mode || 'ai',
     }
     keywordRulesInput.value = (defaultValues.keyword_rules || props.initialData.keyword_rules || []).join('\n')
+    applyPriceScope((defaultValues as any).price_scope || props.initialData.price_scope)
     // 编辑模式下，根据 cron 值判断模式
     const cronVal = defaultValues.cron ?? props.initialData.cron ?? ''
     cronMode.value = isPresetCronValue(cronVal) ? 'preset' : 'custom'
@@ -150,6 +208,7 @@ watch(() => [props.mode, props.initialData, props.defaultValues, props.defaultAc
     if (defaultValues.keyword_rules && defaultValues.keyword_rules.length > 0) {
       keywordRulesInput.value = defaultValues.keyword_rules.join('\n')
     }
+    applyPriceScope((defaultValues as any).price_scope)
     // 创建模式下，根据默认值判断模式
     const cronVal = defaultValues.cron ?? ''
     cronMode.value = isPresetCronValue(cronVal) ? 'preset' : 'custom'
@@ -246,6 +305,13 @@ function handleSubmit() {
   }
 
   submitData.decision_mode = decisionMode
+  const priceScope = buildPriceScope()
+  if (priceScope.mode === 'keyword' && props.mode === 'create') {
+    // 创建时留空，交给后端根据关键词/需求自动推断；编辑时显式关闭。
+    delete submitData.price_scope
+  } else {
+    submitData.price_scope = priceScope
+  }
   submitData.account_strategy = currentAccountStrategy
   submitData.analyze_images = submitData.analyze_images !== false
   submitData.keyword_rules = decisionMode === 'keyword' ? keywordRules : []
@@ -302,6 +368,54 @@ function handleSubmit() {
           <p class="text-xs text-gray-500">
             {{ t('tasks.form.analyzeImagesHint') }}
           </p>
+        </div>
+      </div>
+
+      <div v-if="form.decision_mode === 'ai'" class="grid gap-2 sm:grid-cols-4 sm:gap-4">
+        <Label class="pt-1 sm:pt-2 sm:text-right">{{ t('tasks.form.priceScope') }}</Label>
+        <div class="space-y-3 sm:col-span-3">
+          <Select v-model="priceScopeMode">
+            <SelectTrigger>
+              <SelectValue :placeholder="t('tasks.form.priceScopeModePlaceholder')" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="keyword">{{ t('tasks.form.priceScopeModeKeyword') }}</SelectItem>
+              <SelectItem value="task">{{ t('tasks.form.priceScopeModeTask') }}</SelectItem>
+              <SelectItem value="config">{{ t('tasks.form.priceScopeModeConfig') }}</SelectItem>
+            </SelectContent>
+          </Select>
+          <p class="text-xs text-gray-500">{{ t('tasks.form.priceScopeHint') }}</p>
+
+          <div v-if="priceScopeMode !== 'keyword'" class="grid gap-3 sm:grid-cols-2">
+            <div class="grid gap-1">
+              <Label for="price-scope-chip">{{ t('tasks.form.priceScopeChip') }}</Label>
+              <Input id="price-scope-chip" v-model="priceScopeChip" :placeholder="t('tasks.form.priceScopeChipPlaceholder')" />
+            </div>
+            <div class="grid gap-1">
+              <Label>{{ t('tasks.form.priceScopeMemory') }}</Label>
+              <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                <Input type="number" v-model="priceScopeMemoryMin" placeholder="24" />
+                <span>-</span>
+                <Input type="number" v-model="priceScopeMemoryMax" placeholder="48" />
+              </div>
+            </div>
+            <div class="grid gap-1">
+              <Label for="price-scope-window">{{ t('tasks.form.priceScopeWindow') }}</Label>
+              <Input id="price-scope-window" type="number" v-model="priceScopeWindowDays" />
+            </div>
+            <div class="grid gap-1">
+              <Label for="price-scope-samples">{{ t('tasks.form.priceScopeMinSamples') }}</Label>
+              <Input id="price-scope-samples" type="number" v-model="priceScopeMinSamples" />
+            </div>
+          </div>
+
+          <div v-if="priceScopeMode === 'config'" class="flex items-start gap-2">
+            <Switch v-model="priceScopeBucketStorage" />
+            <div>
+              <Label>{{ t('tasks.form.priceScopeBucketStorage') }}</Label>
+              <p class="text-xs text-gray-500">{{ t('tasks.form.priceScopeBucketStorageHint') }}</p>
+            </div>
+          </div>
         </div>
       </div>
 

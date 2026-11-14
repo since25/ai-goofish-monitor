@@ -57,6 +57,7 @@ export interface PriceInsight {
   max_price?: number | null;
   market_avg_price?: number | null;
   market_median_price?: number | null;
+  "参考口径"?: Record<string, any>;
   price_change_amount?: number | null;
   price_change_percent?: number | null;
   deal_score?: number | null;
@@ -66,6 +67,7 @@ export interface PriceInsight {
 }
 
 export interface ResultInsights {
+  "参考口径"?: Record<string, any>;
   market_summary: {
     sample_count: number;
     avg_price: number | null;

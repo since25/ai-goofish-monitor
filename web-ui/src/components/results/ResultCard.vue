@@ -155,10 +155,10 @@ const expanded = ref(false)
       <div v-if="priceInsight?.observation_count" class="mt-4 grid grid-cols-2 gap-3">
         <div class="bg-slate-50/50 p-2.5 rounded-xl border border-slate-100/50 group/stat">
           <div class="flex items-center gap-1.5 text-[10px] font-medium text-slate-400 mb-1">
-            <TrendingUp class="w-3 h-3" /> {{ t('results.card.marketAvg') }}
+            <TrendingUp class="w-3 h-3" /> {{ priceInsight['参考口径'] ? t('results.card.marketMedian') : t('results.card.marketAvg') }}
           </div>
           <div class="text-sm font-bold text-slate-700">
-            {{ priceInsight.market_avg_price ? `¥${priceInsight.market_avg_price}` : '—' }}
+            {{ priceInsight.market_median_price || priceInsight.market_avg_price ? `¥${priceInsight.market_median_price || priceInsight.market_avg_price}` : '—' }}
           </div>
         </div>
         <div class="bg-slate-50/50 p-2.5 rounded-xl border border-slate-100/50">

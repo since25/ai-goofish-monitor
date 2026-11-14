@@ -123,3 +123,61 @@ def test_generate_request_requires_state_file_for_fixed_account_strategy():
         return
 
     raise AssertionError("固定账号模式应要求 account_state_file")
+
+
+def _task_with_scope(price_scope=None):
+    kwargs = {}
+    if price_scope is not None:
+        kwargs["price_scope"] = price_scope
+    return Task(
+        id=1,
+        task_name="m4pro",
+        enabled=True,
+        keyword="MacBook Pro M4 Pro",
+        description="24-48G",
+        max_pages=1,
+        personal_only=True,
+        min_price=None,
+        max_price=None,
+        cron=None,
+        ai_prompt_base_file="prompts/base_prompt.txt",
+        ai_prompt_criteria_file="prompts/macbook_pro_m4_pro_criteria.txt",
+        is_running=False,
+        **kwargs,
+    )
+
+
+def test_task_price_scope_defaults_to_keyword():
+    task = _task_with_scope()
+    assert task.price_scope.mode == "keyword"
+    assert task.price_scope.is_active() is False
+
+
+def test_task_price_scope_is_validated_from_dict():
+    task = _task_with_scope(
+        {
+            "mode": "CONFIG",
+            "match": {"chip": "M4 Pro", "memory_gb": [24, 48]},
+            "bucket_by": ["chip", "memory_gb", "memory_gb"],
+            "fallback": ["drop_storage"],
+        }
+    )
+    assert task.price_scope.mode == "config"
+    assert task.price_scope.bucket_by == ["chip", "memory_gb"]
+    assert task.price_scope.is_active() is True
+
+
+def test_task_update_price_scope_roundtrip():
+    task = _task_with_scope()
+    update = TaskUpdate(
+        price_scope={
+            "mode": "config",
+            "match": {"chip": "m4pro", "memory_gb": [24, 48]},
+            "bucket_by": ["chip", "memory_gb"],
+            "min_samples": 3,
+        }
+    )
+    updated = task.apply_update(update)
+    assert updated.price_scope.mode == "config"
+    assert updated.price_scope.bucket_by == ["chip", "memory_gb"]
+    assert updated.price_scope.min_samples == 3

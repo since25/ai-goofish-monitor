@@ -51,4 +51,15 @@ def test_save_to_jsonl(tmp_path, monkeypatch):
             sort_order="asc",
         )
     )
-    assert records == [record]
+    assert len(records) == 1
+
+    stored = records[0]
+    # 业务字段原样回读
+    for key, value in record.items():
+        assert stored[key] == value
+
+    # 读取时会额外附加可见性元数据（前端依赖这些字段）
+    assert stored["_status"] == "active"
+    assert stored["_matched_blacklist_keywords"] == []
+    assert stored["_hidden_reason"] is None
+    assert stored["_effective_hidden"] is False

@@ -95,7 +95,10 @@ def get_ai_request_params(**kwargs):
     构建AI请求参数，根据ENABLE_THINKING和ENABLE_RESPONSE_FORMAT环境变量决定是否添加相应参数
     """
     if ENABLE_THINKING:
-        kwargs["extra_body"] = {"enable_thinking": False}
+        kwargs["extra_body"] = {
+            "enable_thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
     
     # 如果禁用结构化输出，则移除 text.format 配置
     if not ENABLE_RESPONSE_FORMAT and "text" in kwargs:

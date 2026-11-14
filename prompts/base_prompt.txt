@@ -6,12 +6,27 @@
 
 你的输出必须是以下格式的单个 JSON 对象，不能包含任何额外的注释或解释性文字。
 
+**spec 字段要求**：必须先从商品标题、描述、图片（尤其是「关于本机」截图与电池截图）中提取机器参数，逐项填入 spec；无法从任何来源确认的项填 null，严禁猜测或编造。spec 只用于行情汇总，不影响 is_recommended 判定。
+
 ```json
 {
   "prompt_version": "EagleEye-V6.4",
   "is_recommended": boolean,
   "reason": "一句话综合评价。若为有条件推荐，需明确指出：'有条件推荐，卖家画像为顶级个人玩家，但需在购买前向其确认[电池健康度]和[维修历史]等缺失信息。'",
   "risk_tags": ["string"],
+  "spec": {
+    "model": "string 或 null，如 MacBook Pro",
+    "chip": "string 或 null，如 M4 Pro / M3 Max",
+    "screen_inch": "number 或 null，如 14 / 16",
+    "memory_gb": "number 或 null，如 24 / 32 / 36 / 48",
+    "storage_gb": "number 或 null，如 512 / 1024",
+    "color": "string 或 null，如 深空灰 / 深空黑 / 银色 / 黑色 / 星空色 / 午夜色",
+    "region": "string 或 null，如 国行 / 美版 / 港版 / 日版 / 澳版 / 欧版",
+    "battery_health_pct": "number 或 null，电池健康百分比",
+    "battery_cycles": "number 或 null，电池循环次数",
+    "warranty": "string 或 null，如 保修到2027年2月 / 已过保 / 无保修",
+    "source": "string，spec 的提取来源：标题 / 描述 / 图片 / 综合"
+  },
   "criteria_analysis": {
     "model_chip": { "status": "string", "comment": "string", "evidence": "string" },
     "battery_health": { "status": "string", "comment": "string", "evidence": "string" },

@@ -329,10 +329,12 @@ async def get_ai_analysis(product_data, image_paths=None, prompt_text=""):
             if base64_image:
                 image_data_urls.append(f"data:image/jpeg;base64,{base64_image}")
 
+    price_reference = product_data.get("价格参考") or {}
     combined_text_prompt = build_analysis_text_prompt(
         product_details_json,
         system_prompt,
         include_images=bool(image_data_urls),
+        has_scoped_price_reference=bool(price_reference.get("参考口径")),
     )
     user_content = build_user_message_content(combined_text_prompt, image_data_urls)
     messages = [{"role": "user", "content": user_content}]

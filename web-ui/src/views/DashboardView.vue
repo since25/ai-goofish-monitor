@@ -82,7 +82,7 @@ const insightCards = computed(() => {
   const history = focusInsights.value?.history_summary
   return [
     {
-      label: t('results.insights.currentAvg'),
+      label: focusInsights.value?.['参考口径'] ? t('results.insights.scopedCurrentAvg') : t('results.insights.currentAvg'),
       value: market?.avg_price ? `¥${market.avg_price}` : '—',
       hint: market
         ? t('results.insights.sampleCount', { count: market.sample_count })

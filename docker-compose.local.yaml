@@ -1,0 +1,33 @@
+services:
+  app:
+    image: ai-goofish-monitor:local
+    build:
+      context: .
+      dockerfile: Dockerfile.release
+      args:
+        BASE_IMAGE: ghcr.io/usagi-org/ai-goofish:latest
+    container_name: ai-goofish-monitor-app
+    pull_policy: never
+    init: true
+    # 浏览器任务内存开销较大：单容器限制 6G，并禁止额外 swap（主机本身无 swap）。
+    # 之前实测峰值约 2.7G/3G，余量过小，容易在并发抓取时触顶。
+    mem_limit: 6g
+    memswap_limit: 6g
+    ports:
+      - "8013:8000"
+    env_file:
+      - .env
+    environment:
+      APP_DATABASE_FILE: /app/data/app.sqlite3
+    volumes:
+      - ./.env:/app/.env
+      - ./data:/app/data
+      - ./state:/app/state
+      - ./config.json:/app/config.json
+      - ./prompts:/app/prompts
+      - ./reports:/app/reports
+      - ./jsonl:/app/jsonl
+      - ./logs:/app/logs
+      - ./images:/app/images
+      - ./price_history:/app/price_history
+    restart: unless-stopped

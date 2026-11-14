@@ -17,7 +17,7 @@ const summaryCards = computed(() => {
   const history = props.insights.history_summary
   return [
     {
-      label: t('results.insights.currentAvg'),
+      label: props.insights['参考口径'] ? t('results.insights.scopedCurrentAvg') : t('results.insights.currentAvg'),
       value: market.avg_price ? `¥${market.avg_price}` : '—',
       hint: t('results.insights.sampleCount', { count: market.sample_count || 0 }),
     },
@@ -58,6 +58,9 @@ const latestSnapshotText = computed(() => {
           </h2>
           <p class="max-w-2xl text-sm leading-6 text-slate-500">
             {{ t('results.insights.subtitle') }}
+          </p>
+          <p v-if="insights?.['参考口径']" class="text-xs text-primary/70">
+            {{ t('results.insights.scopeNote') }}
           </p>
         </div>
 

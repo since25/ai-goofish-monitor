@@ -41,6 +41,12 @@ const routes = [
         meta: { titleKey: 'routes.results', requiresAuth: true },
       },
       {
+        path: 'recommendations',
+        name: 'Recommendations',
+        component: () => import('@/views/RecommendationsView.vue'),
+        meta: { titleKey: 'routes.recommendations', requiresAuth: true },
+      },
+      {
         path: 'logs',
         name: 'Logs',
         component: () => import('@/views/LogsView.vue'),

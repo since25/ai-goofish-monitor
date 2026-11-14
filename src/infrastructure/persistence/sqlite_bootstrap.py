@@ -82,8 +82,8 @@ def _import_tasks_if_needed(conn, legacy_config_file: str | None) -> None:
                 max_pages, personal_only, min_price, max_price, cron,
                 ai_prompt_base_file, ai_prompt_criteria_file, account_state_file,
                 account_strategy, free_shipping, new_publish_option, region,
-                decision_mode, keyword_rules_json, is_running
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                price_scope_json, decision_mode, keyword_rules_json, is_running
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 index,
@@ -104,6 +104,7 @@ def _import_tasks_if_needed(conn, legacy_config_file: str | None) -> None:
                 _as_int(raw_task.get("free_shipping", True)),
                 raw_task.get("new_publish_option"),
                 raw_task.get("region"),
+                json.dumps(raw_task.get("price_scope") or {}, ensure_ascii=False),
                 raw_task.get("decision_mode", "ai"),
                 json.dumps(raw_task.get("keyword_rules") or [], ensure_ascii=False),
                 _as_int(raw_task.get("is_running", False)),

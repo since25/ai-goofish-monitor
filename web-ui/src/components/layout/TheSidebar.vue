@@ -6,6 +6,7 @@ import {
   ListTodo, 
   Users, 
   Layers, 
+  ListOrdered,
   Terminal, 
   Settings2,
   ChevronRight
@@ -24,6 +25,7 @@ const navItems = computed(() => [
   { to: '/tasks', label: t('sidebar.tasks'), icon: ListTodo },
   { to: '/accounts', label: t('sidebar.accounts'), icon: Users },
   { to: '/results', label: t('sidebar.results'), icon: Layers },
+  { to: '/recommendations', label: t('sidebar.recommendations'), icon: ListOrdered },
   { to: '/logs', label: t('sidebar.logs'), icon: Terminal },
   { to: '/settings', label: t('sidebar.settings'), icon: Settings2 },
 ])

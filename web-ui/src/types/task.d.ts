@@ -1,5 +1,17 @@
 // Based on the Pydantic model in the backend
 
+export type PriceScopeMode = 'keyword' | 'task' | 'config';
+export type PriceScopeFallback = 'drop_storage' | 'drop_memory' | 'task';
+
+export interface PriceScope {
+  mode: PriceScopeMode;
+  match: Record<string, string | number | (string | number | null)[] | null>;
+  bucket_by: string[];
+  window_days: number;
+  min_samples: number;
+  fallback: PriceScopeFallback[];
+}
+
 export interface Task {
   id: number;
   task_name: string;
@@ -20,6 +32,7 @@ export interface Task {
   free_shipping?: boolean;
   new_publish_option?: string | null;
   region?: string | null;
+  price_scope?: PriceScope;
   decision_mode: 'ai' | 'keyword';
   keyword_rules: string[];
   is_running: boolean;
@@ -71,6 +84,7 @@ export interface TaskGenerateRequest {
   free_shipping?: boolean;
   new_publish_option?: string | null;
   region?: string | null;
+  price_scope?: PriceScope;
   decision_mode?: 'ai' | 'keyword';
   keyword_rules?: string[];
 }

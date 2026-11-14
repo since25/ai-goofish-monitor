@@ -41,6 +41,7 @@ SCHEMA_STATEMENTS = (
         free_shipping INTEGER NOT NULL,
         new_publish_option TEXT,
         region TEXT,
+        price_scope_json TEXT NOT NULL DEFAULT '{}',
         decision_mode TEXT NOT NULL,
         keyword_rules_json TEXT NOT NULL,
         is_running INTEGER NOT NULL
@@ -87,6 +88,12 @@ SCHEMA_STATEMENTS = (
         seller TEXT,
         publish_time TEXT,
         link TEXT,
+        spec_json TEXT NOT NULL DEFAULT '{}',
+        spec_source TEXT NOT NULL DEFAULT 'unknown',
+        chip TEXT,
+        memory_gb INTEGER,
+        storage_gb INTEGER,
+        screen_inch REAL,
         UNIQUE(keyword_slug, run_id, item_id)
     )
     """,
@@ -143,6 +150,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
     for statement in SCHEMA_STATEMENTS:
         conn.execute(statement)
     _migrate_result_items_status(conn)
+    _migrate_tasks_price_scope(conn)
+    _migrate_price_snapshots_spec(conn)
+    _migrate_price_snapshots_spec_columns(conn)
     conn.commit()
 
 
@@ -164,6 +174,74 @@ def _migrate_result_items_status(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_results_filename_status_crawl"
         " ON result_items(result_filename, status, crawl_time DESC)"
+    )
+
+
+def _migrate_tasks_price_scope(conn: sqlite3.Connection) -> None:
+    """为 tasks 表添加 price_scope_json 列（仅执行一次）。"""
+    row = conn.execute(
+        "SELECT value FROM app_metadata WHERE key = 'migration:tasks_price_scope'"
+    ).fetchone()
+    if row is not None:
+        return
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+    if "price_scope_json" not in cols:
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN price_scope_json TEXT NOT NULL DEFAULT '{}'"
+        )
+    conn.execute(
+        "INSERT OR REPLACE INTO app_metadata(key, value) VALUES ('migration:tasks_price_scope', 'done')"
+    )
+
+
+def _migrate_price_snapshots_spec(conn: sqlite3.Connection) -> None:
+    """为 price_snapshots 添加规格快照列（仅执行一次）。"""
+    row = conn.execute(
+        "SELECT value FROM app_metadata WHERE key = 'migration:price_snapshots_spec'"
+    ).fetchone()
+    if row is not None:
+        return
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(price_snapshots)").fetchall()]
+    if "spec_json" not in cols:
+        conn.execute(
+            "ALTER TABLE price_snapshots ADD COLUMN spec_json TEXT NOT NULL DEFAULT '{}'"
+        )
+    if "spec_source" not in cols:
+        conn.execute(
+            "ALTER TABLE price_snapshots ADD COLUMN spec_source TEXT NOT NULL DEFAULT 'unknown'"
+        )
+    conn.execute(
+        "INSERT OR REPLACE INTO app_metadata(key, value) "
+        "VALUES ('migration:price_snapshots_spec', 'done')"
+    )
+
+
+def _migrate_price_snapshots_spec_columns(conn: sqlite3.Connection) -> None:
+    """为 price_snapshots 添加可索引的配置列。"""
+    row = conn.execute(
+        "SELECT value FROM app_metadata "
+        "WHERE key = 'migration:price_snapshots_spec_columns'"
+    ).fetchone()
+    if row is not None:
+        return
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(price_snapshots)").fetchall()]
+    for name, column_type in (
+        ("chip", "TEXT"),
+        ("memory_gb", "INTEGER"),
+        ("storage_gb", "INTEGER"),
+        ("screen_inch", "REAL"),
+    ):
+        if name not in cols:
+            conn.execute(
+                f"ALTER TABLE price_snapshots ADD COLUMN {name} {column_type}"
+            )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_snapshots_keyword_chip_memory "
+        "ON price_snapshots(keyword_slug, chip, memory_gb)"
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO app_metadata(key, value) "
+        "VALUES ('migration:price_snapshots_spec_columns', 'done')"
     )
 
 
