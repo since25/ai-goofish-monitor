@@ -96,3 +96,15 @@ def test_build_rows_ranks_m1max_result():
     assert row["coefficient"] is not None
     assert row["value"] is not None
     assert row["hold_score"] is not None
+
+
+def test_one_year_depreciation_stays_monotonic_for_old_models():
+    from src.services.recommendation_service import (
+        DEFAULT_FORWARD_DEPRECIATION,
+        one_year_depreciation,
+    )
+
+    rates = [one_year_depreciation(age) for age in range(0, 11)]
+    assert rates == sorted(rates, reverse=True)
+    assert one_year_depreciation(6) < one_year_depreciation(5)
+    assert one_year_depreciation(None) == DEFAULT_FORWARD_DEPRECIATION

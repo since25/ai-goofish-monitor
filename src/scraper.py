@@ -4,6 +4,7 @@ import os
 import random
 import re
 import signal
+import subprocess
 import tempfile
 from datetime import datetime
 from typing import Callable, Optional
@@ -124,31 +125,67 @@ BROWSER_CLOSE_TIMEOUT_SECONDS = 30
 BROWSER_PROCESS_MARKERS = ("chrome", "chromium", "msedge", "headless_shell", "crashpad")
 
 
-def _iter_descendant_pids(root_pid: Optional[int] = None) -> list[int]:
-    """返回本进程（或指定进程）的所有后代 PID，仅依赖 /proc。"""
-    root = root_pid if root_pid is not None else os.getpid()
-    children: dict[int, list[int]] = {}
-    try:
-        entries = os.listdir("/proc")
-    except OSError:
-        return []
+PROC_ROOT = "/proc"
 
-    for entry in entries:
-        if not entry.isdigit():
-            continue
-        pid = int(entry)
+
+def _load_process_children(proc_root: str = PROC_ROOT) -> dict[int, list[int]]:
+    """读取 ppid -> [pid] 映射。
+
+    Linux 走 /proc；没有 /proc 的平台（macOS 开发机）退回 `ps`，
+    否则关浏览器兜底在本地永远杀不到残留进程。
+    """
+    children: dict[int, list[int]] = {}
+    if os.path.isdir(proc_root):
         try:
-            with open(f"/proc/{pid}/stat", "rb") as fh:
-                data = fh.read()
+            entries = os.listdir(proc_root)
         except OSError:
+            return children
+        for entry in entries:
+            if not entry.isdigit():
+                continue
+            pid = int(entry)
+            try:
+                with open(f"{proc_root}/{pid}/stat", "rb") as fh:
+                    data = fh.read()
+            except OSError:
+                continue
+            # comm 字段可能包含空格或括号，因此取最后一个 ')' 之后的字段。
+            try:
+                fields = data[data.rindex(b")") + 2:].split()
+                ppid = int(fields[1])
+            except (ValueError, IndexError):
+                continue
+            children.setdefault(ppid, []).append(pid)
+        return children
+
+    try:
+        output = subprocess.run(
+            ["ps", "-Ao", "pid=,ppid="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return children
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
             continue
-        # comm 字段可能包含空格或括号，因此取最后一个 ')' 之后的字段。
         try:
-            fields = data[data.rindex(b")") + 2:].split()
-            ppid = int(fields[1])
-        except (ValueError, IndexError):
+            pid, ppid = int(parts[0]), int(parts[1])
+        except ValueError:
             continue
         children.setdefault(ppid, []).append(pid)
+    return children
+
+
+def _iter_descendant_pids(
+    root_pid: Optional[int] = None, proc_root: str = PROC_ROOT
+) -> list[int]:
+    """返回本进程（或指定进程）的所有后代 PID。"""
+    root = root_pid if root_pid is not None else os.getpid()
+    children = _load_process_children(proc_root)
 
     ordered: list[int] = []
     stack = list(children.get(root, []))
@@ -159,24 +196,38 @@ def _iter_descendant_pids(root_pid: Optional[int] = None) -> list[int]:
     return ordered
 
 
-def _read_cmdline(pid: int) -> str:
+def _read_cmdline(pid: int, proc_root: str = PROC_ROOT) -> str:
     try:
-        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+        with open(f"{proc_root}/{pid}/cmdline", "rb") as fh:
             return fh.read().replace(b"\x00", b" ").decode("utf-8", "replace").lower()
     except OSError:
+        pass
+    try:
+        return subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        ).stdout.strip().lower()
+    except (OSError, subprocess.SubprocessError):
         return ""
 
 
-def _kill_descendant_processes(markers: Optional[tuple[str, ...]] = None) -> int:
+def _kill_descendant_processes(
+    markers: Optional[tuple[str, ...]] = None, proc_root: str = PROC_ROOT
+) -> int:
     """强杀本进程派生的子进程。
 
     Args:
         markers: 非空时只杀 cmdline 命中这些关键字的进程。
     """
-    pids = _iter_descendant_pids()
+    pids = _iter_descendant_pids(proc_root=proc_root)
     killed = 0
     for pid in pids:
-        if markers and not any(marker in _read_cmdline(pid) for marker in markers):
+        if markers and not any(
+            marker in _read_cmdline(pid, proc_root) for marker in markers
+        ):
             continue
         try:
             os.kill(pid, signal.SIGKILL)

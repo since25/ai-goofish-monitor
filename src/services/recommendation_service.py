@@ -66,6 +66,9 @@ FORWARD_DEPRECIATION_BY_AGE = {
     4: 0.08,
     5: 0.07,
 }
+# 6 年及以上：折旧继续放缓，不能比 5 年更高。
+MATURE_FORWARD_DEPRECIATION = 0.06
+# 机龄未知（解析不出发售年份/芯片）时按保守值估。
 DEFAULT_FORWARD_DEPRECIATION = 0.10
 DEPRECIATION_RANGE = 0.03
 CHIP_DEFAULT_YEAR = {
@@ -200,7 +203,17 @@ def model_age(year: str, chip: Optional[str]) -> Optional[int]:
 
 
 def one_year_depreciation(age: Optional[int]) -> float:
-    return FORWARD_DEPRECIATION_BY_AGE.get(age, DEFAULT_FORWARD_DEPRECIATION)
+    """一年期折旧率：随年龄单调不增。
+
+    - 0~5 年走查表；
+    - 6 年及以上固定 6%，避免旧机型折旧率反倒回升；
+    - 机龄未知才用保守默认值。
+    """
+    if age is None:
+        return DEFAULT_FORWARD_DEPRECIATION
+    if age in FORWARD_DEPRECIATION_BY_AGE:
+        return FORWARD_DEPRECIATION_BY_AGE[age]
+    return MATURE_FORWARD_DEPRECIATION
 
 
 def value_per_10k(coefficient: Optional[float], price: Optional[float]) -> Optional[float]:

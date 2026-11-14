@@ -15,3 +15,9 @@ prompts/
 .serena/
 price_history/
 data/
+
+# 现场/本地生成物，不入库
+patches/
+reports/
+visuals/
+.DS_Store

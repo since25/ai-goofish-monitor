@@ -4,11 +4,8 @@ services:
     container_name: ai-goofish-monitor-app
     pull_policy: always
     init: true
-    # 浏览器任务内存开销较大：单容器限制 6G，并禁止额外 swap（主机本身无 swap）。
-    mem_limit: 6g
-    memswap_limit: 6g
     ports:
-      - "8013:8000"
+      - "8000:8000"
     env_file:
       - .env
     environment:
@@ -18,10 +15,6 @@ services:
       - ./data:/app/data
       - ./state:/app/state
       - ./config.json:/app/config.json
-      - ./patches/ai_client.py:/app/src/infrastructure/external/ai_client.py:ro
-      - ./patches/scraper.py:/app/src/scraper.py:ro
-      - ./patches/result_export_service.py:/app/src/services/result_export_service.py:ro
-      - ./patches/config.py:/app/src/config.py:ro
       - ./prompts:/app/prompts
       - ./jsonl:/app/jsonl
       - ./logs:/app/logs
