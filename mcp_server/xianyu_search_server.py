@@ -239,6 +239,12 @@ def handle(message: dict) -> None:
     if method in ("prompts/list",):
         _result(message_id, {"prompts": []})
         return
+    if method in ("logging/setLevel", "notifications/cancelled"):
+        return
+    if message_id is None:
+        # JSON-RPC 通知不需要回包，避免客户端把错误响应当成噪声。
+        print(f"[{SERVER_NAME}] 忽略通知: {method}", file=sys.stderr, flush=True)
+        return
     _error(message_id, -32601, f"Method not found: {method}")
 
 

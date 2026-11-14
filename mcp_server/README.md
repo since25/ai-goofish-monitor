@@ -30,18 +30,19 @@ XIANYU_BASE_URL=http://192.168.70.138:8013 python3 mcp_server/xianyu_search_serv
 在 `~/.dsh/profiles/desktop/cordis.patch.yml` 末尾追加：
 
 ```yaml
-- id: xianyu-search
-  name: '@deepseek-ai/dsh-mcp-client'
-  config:
-    serverName: xianyu
-    transport: stdio
-    command: /opt/homebrew/bin/python3
-    args:
-      - /Users/wangyichuan/selfapp/ai-goofish-monitor/mcp_server/xianyu_search_server.py
-    env:
-      XIANYU_BASE_URL: http://192.168.70.138:8013
-    toolCallTimeoutMs: 120000
-    failOnStartupError: false
+- insert:
+    - id: xianyu-search
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: xianyu
+        transport: stdio
+        command: /opt/homebrew/bin/python3
+        args:
+          - /Users/wangyichuan/selfapp/ai-goofish-monitor/mcp_server/xianyu_search_server.py
+        env:
+          XIANYU_BASE_URL: http://192.168.70.138:8013
+        toolCallTimeoutMs: 120000
+        failOnStartupError: false
 ```
 
 工具会以 `mcp__xianyu__search_submit` 这样的名字出现。改完需要重载/重启
