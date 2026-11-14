@@ -19,7 +19,7 @@ from src.infrastructure.persistence.sqlite_connection import sqlite_connection
 
 PLAUSIBLE_MEMORY = frozenset({8, 16, 18, 24, 32, 36, 48, 64, 96, 128})
 
-CHIP_RE = re.compile(r"(?<![A-Za-z0-9])M(\d{1,2})\s*(Pro|Max|Ultra)?(?![A-Za-z])", re.IGNORECASE)
+CHIP_RE = re.compile(r"(?<![A-Za-z0-9])M(\d{1,2})[-\s]*(Pro|Max|Ultra)?(?![A-Za-z])", re.IGNORECASE)
 MEM_WITH_LABEL_RE = re.compile(r"(\d{2,3})\s*(?:GB|G|g|Ｇ)\s*(?:内存|运存|统一内存)")
 MEM_LABEL_FIRST_RE = re.compile(r"(?:内存|运存|统一内存)\s*[:：]?\s*(\d{2,3})")
 MEM_COMBO_RE = re.compile(r"(\d{2,3})\s*[+＋/]\s*(\d{3,4})\s*(?:GB|G|g|Ｇ)?")
